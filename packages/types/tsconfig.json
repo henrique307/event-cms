@@ -1,0 +1,5 @@
+{
+  "extends": "@event-cms/config/tsconfig/base.json",
+  "compilerOptions": { "module": "commonjs", "moduleResolution": "node", "outDir": "dist", "rootDir": "src" },
+  "include": ["src"]
+}

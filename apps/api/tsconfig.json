@@ -1,0 +1,6 @@
+{
+  "extends": "@event-cms/config/tsconfig/nest.json",
+  "compilerOptions": { "outDir": "dist", "rootDir": "src", "baseUrl": "." },
+  "include": ["src"],
+  "exclude": ["node_modules", "dist", "**/*.spec.ts"]
+}

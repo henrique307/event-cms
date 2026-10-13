@@ -1,0 +1,232 @@
+// Schema multi-tenant: todo dado de conteúdo pertence a um Event (eventId).
+// IDs em UUID; timestamps em todas as entidades mutáveis.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------- Enums ----------
+
+/// Papel do usuário DENTRO de um evento. Novos papéis = novo valor aqui.
+enum EventRole {
+  OWNER
+  ADMIN
+}
+
+enum EventStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+/// Tipos de seção do site público. Novos tipos entram como novos valores.
+enum SectionType {
+  HERO
+  ABOUT
+  SCHEDULE
+  TICKETS
+  LOCATION
+  FAQ
+  CUSTOM
+}
+
+enum TicketStatus {
+  ACTIVE
+  INACTIVE
+}
+
+// ---------- Identidade e sessão ----------
+
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  email        String   @unique
+  passwordHash String
+  name         String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  memberships         EventMember[]
+  refreshTokens       RefreshToken[]
+  passwordResetTokens PasswordResetToken[]
+  uploadedMedia       Media[]
+}
+
+/// Uma linha por sessão (dispositivo). Guardamos só o hash do token.
+model RefreshToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+/// Preparado para recuperação de senha (fluxo ainda não implementado).
+model PasswordResetToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// ---------- Tenant ----------
+
+model Event {
+  id          String      @id @default(uuid()) @db.Uuid
+  /// Identifica o tenant pelo subdomínio (meu-evento.eventhub.com).
+  slug        String      @unique
+  name        String
+  status      EventStatus @default(DRAFT)
+  startsAt    DateTime?
+  endsAt      DateTime?
+  timezone    String      @default("America/Sao_Paulo")
+  venueName   String?
+  address     String?
+  description String?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  members  EventMember[]
+  settings EventSettings?
+  seo      SEOSettings?
+  sections Section[]
+  tickets  Ticket[]
+  media    Media[]
+}
+
+/// Liga usuário <-> evento com um papel. Base de toda autorização por tenant.
+model EventMember {
+  id        String    @id @default(uuid()) @db.Uuid
+  eventId   String    @db.Uuid
+  userId    String    @db.Uuid
+  role      EventRole
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, userId])
+  @@index([userId])
+}
+
+/// Identidade visual e informações gerais (1:1 com Event).
+model EventSettings {
+  id             String   @id @default(uuid()) @db.Uuid
+  eventId        String   @unique @db.Uuid
+  logoId         String?  @db.Uuid
+  bannerId       String?  @db.Uuid
+  faviconId      String?  @db.Uuid
+  primaryColor   String   @default("#111827")
+  secondaryColor String   @default("#f59e0b")
+  /// Ex.: { "instagram": "https://...", "youtube": "https://..." }
+  socialLinks    Json     @default("{}")
+  generalInfo    String?
+  footerText     String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  event   Event  @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  logo    Media? @relation("SettingsLogo", fields: [logoId], references: [id], onDelete: SetNull)
+  banner  Media? @relation("SettingsBanner", fields: [bannerId], references: [id], onDelete: SetNull)
+  favicon Media? @relation("SettingsFavicon", fields: [faviconId], references: [id], onDelete: SetNull)
+}
+
+/// Bloco do site público. `content` é JSON cujo formato depende de `type`
+/// (validado na API), permitindo novos tipos sem migration.
+model Section {
+  id        String      @id @default(uuid()) @db.Uuid
+  eventId   String      @db.Uuid
+  type      SectionType
+  title     String?
+  content   Json        @default("{}")
+  order     Int
+  enabled   Boolean     @default(true)
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@index([eventId, order])
+}
+
+/// Preço em centavos (inteiro): sem erro de ponto flutuante e no formato
+/// que gateways de pagamento usam.
+model Ticket {
+  id            String       @id @default(uuid()) @db.Uuid
+  eventId       String       @db.Uuid
+  name          String
+  description   String?
+  priceCents    Int
+  currency      String       @default("BRL") @db.Char(3)
+  quantityTotal Int
+  quantitySold  Int          @default(0)
+  status        TicketStatus @default(ACTIVE)
+  salesStartAt  DateTime?
+  salesEndAt    DateTime?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@index([eventId])
+}
+
+/// Metadados do arquivo; o binário fica no storage S3 (storageKey).
+model Media {
+  id           String   @id @default(uuid()) @db.Uuid
+  eventId      String   @db.Uuid
+  uploadedById String?  @db.Uuid
+  storageKey   String   @unique
+  url          String
+  mimeType     String
+  sizeBytes    Int
+  width        Int?
+  height       Int?
+  alt          String?
+  createdAt    DateTime @default(now())
+
+  event      Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  uploadedBy User? @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
+
+  logoFor    EventSettings[] @relation("SettingsLogo")
+  bannerFor  EventSettings[] @relation("SettingsBanner")
+  faviconFor EventSettings[] @relation("SettingsFavicon")
+  ogImageFor SEOSettings[]   @relation("SeoOgImage")
+
+  @@index([eventId])
+}
+
+/// SEO por evento (1:1). O favicon fica em EventSettings para não duplicar.
+model SEOSettings {
+  id              String   @id @default(uuid()) @db.Uuid
+  eventId         String   @unique @db.Uuid
+  metaTitle       String?
+  metaDescription String?
+  keywords        String[] @default([])
+  ogTitle         String?
+  ogDescription   String?
+  ogImageId       String?  @db.Uuid
+  canonicalUrl    String?
+  robots          String   @default("index, follow")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  event   Event  @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  ogImage Media? @relation("SeoOgImage", fields: [ogImageId], references: [id], onDelete: SetNull)
+}

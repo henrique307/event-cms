@@ -1,0 +1,6 @@
+@import 'tailwindcss';
+
+/* Tokens base. O shadcn/ui será inicializado na Fase 5 e estenderá este arquivo. */
+@theme {
+  --color-brand: oklch(0.55 0.18 30);
+}
